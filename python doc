@@ -1,0 +1,81 @@
+Monitoring EC2 Instance Creation for Specific Tags Tutorial
+Objective:
+We want to be notified whenever a new EC2 instance is created with a specific tag. In this case, we're looking for the tag Cost=DDS.
+
+Services Used:
+AWS Lambda: It's the core service where our monitoring logic resides. It responds to events and runs our code.
+Amazon EC2: The service whose resources (instances) we are monitoring.
+Amazon SNS (Simple Notification Service): To send notifications when our conditions are met.
+Amazon CloudWatch Events/EventBridge: This captures the EC2 events and triggers our Lambda function when an instance is launched.
+
+
+Code Breakdown:
+
+Imports:
+
+
+import boto3
+import time
+We're importing the required libraries. boto3 is the AWS SDK for Python. It lets our script talk to AWS services. time allows us to introduce delays.
+
+Lambda Handler Function:
+
+def lambda_handler(event, context):
+This is our primary function. AWS Lambda invokes this function when triggered by an event.
+
+Sleeping for 10 seconds:
+
+time.sleep(10)
+We introduce a pause to give AWS enough time to apply any tags to the new EC2 instance(s).
+
+Setting up Clients and Configurations:
+
+sns_topic_arn = "arn:aws:sns:ap-southeast-2:topic name"
+ec2_client = boto3.client('ec2', region_name='ap-southeast-2')
+sns_client = boto3.client('sns', region_name='ap-southeast-2')
+We define the SNS topic ARN where alerts will be sent. We also set up clients for EC2 and SNS, so we can interact with these services.
+
+Extract Instance IDs:
+
+instances = event['detail']['responseElements']['instancesSet']['items']
+instance_ids = [instance['instanceId'] for instance in instances]
+The event from CloudWatch contains details of the instance(s) that were started. We extract these IDs as we need them to check the tags.
+
+Iterate Over Each Instance:
+
+for instance_id in instance_ids:
+We check each instance separately. If multiple instances were started at the same time, this loop ensures each one is checked.
+
+Fetch Tags for the Instance:
+
+response = ec2_client.describe_instances(InstanceIds=[instance_id])
+instance_tags = response['Reservations'][0]['Instances'][0].get('Tags', [])
+We call the EC2 service to describe the instance and get its tags.
+
+Check for Desired Tag:
+
+desired_tag_found = False
+for tag in instance_tags:
+    if tag['Key'] == 'Cost' and tag['Value'] == 'DDS':
+        desired_tag_found = True
+        break
+We go through each tag of the instance to see if the tag Cost=DDS is present.
+
+Send Alert if Tag is Found:
+
+if desired_tag_found:
+    sns_client.publish(
+        TopicArn=sns_topic_arn,
+        Subject='EC2 Instance with Desired Tag Alert',
+        Message=f"EC2 instance with ID {instance_id} has been created with the desired tag Cost=DDS!"
+    )
+If our desired tag is found on the instance, we send a notification to our SNS topic.
+
+Return Result:
+
+
+return {
+    'statusCode': 200,
+    'body': f"Checked tags for instances: {', '.join(instance_ids)}."
+}
+After processing all instances, the function returns a message, which can be logged in CloudWatch logs, indicating which instance IDs were checked.
