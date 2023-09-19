@@ -1,81 +1,185 @@
-Monitoring EC2 Instance Creation for Specific Tags Tutorial
+AWS EC2 Instance Tag Checker Lambda Tutorial
+
 Objective:
-We want to be notified whenever a new EC2 instance is created with a specific tag. In this case, we're looking for the tag Cost=DDS.
+This script is designed to monitor the creation of EC2 instances and send notifications when a newly created EC2 instance has a specific tag (Cost=Dummy).
 
-Services Used:
-AWS Lambda: It's the core service where our monitoring logic resides. It responds to events and runs our code.
-Amazon EC2: The service whose resources (instances) we are monitoring.
-Amazon SNS (Simple Notification Service): To send notifications when our conditions are met.
-Amazon CloudWatch Events/EventBridge: This captures the EC2 events and triggers our Lambda function when an instance is launched.
-
-
-Code Breakdown:
-
-Imports:
+Services used:
+Lambda: AWS service to run code in response to events.
+EC2: AWS Elastic Compute Cloud where virtual servers (instances) are provisioned.
+SNS (Simple Notification Service): AWS service to send notifications.
+CloudWatch Events/EventBridge: Triggers the Lambda function when specific AWS events occur.
+Python Libraries:
+boto3: The Amazon Web Services (AWS) SDK for Python. It allows Python developers to write software that makes use of AWS services.
+time: Built-in Python library for time-related tasks.
 
 
+Code Walkthrough:
+
+Library Imports:
 import boto3
 import time
-We're importing the required libraries. boto3 is the AWS SDK for Python. It lets our script talk to AWS services. time allows us to introduce delays.
+This imports necessary libraries.
 
 Lambda Handler Function:
+The primary function that AWS Lambda invokes when the service runs the code.
 
 def lambda_handler(event, context):
-This is our primary function. AWS Lambda invokes this function when triggered by an event.
-
-Sleeping for 10 seconds:
-
+Wait Period:
 time.sleep(10)
-We introduce a pause to give AWS enough time to apply any tags to the new EC2 instance(s).
+The function waits for 10 seconds. This is done to allow some time for the EC2 instance tags to be applied after the instance creation event is detected.
 
-Setting up Clients and Configurations:
-
-sns_topic_arn = "arn:aws:sns:ap-southeast-2:topic name"
+Setup:
+sns_topic_arn = "arn name"
 ec2_client = boto3.client('ec2', region_name='ap-southeast-2')
 sns_client = boto3.client('sns', region_name='ap-southeast-2')
-We define the SNS topic ARN where alerts will be sent. We also set up clients for EC2 and SNS, so we can interact with these services.
+Define the ARN (Amazon Resource Name) of the SNS topic where notifications will be sent.
+Initialize the EC2 and SNS clients using the boto3 library to interact with AWS services.
 
-Extract Instance IDs:
+Extract User Information:
+user_arn = event['detail']['userIdentity']['arn']
+Obtain the ARN of the AWS user or service responsible for the action that triggered the Lambda function.
 
+Extract EC2 Instance IDs from the Event:
 instances = event['detail']['responseElements']['instancesSet']['items']
 instance_ids = [instance['instanceId'] for instance in instances]
-The event from CloudWatch contains details of the instance(s) that were started. We extract these IDs as we need them to check the tags.
+The AWS event that triggers the Lambda function contains information about the EC2 instances that were created. This step extracts the IDs of those instances.
 
-Iterate Over Each Instance:
-
+Loop Through Each Instance:
 for instance_id in instance_ids:
-We check each instance separately. If multiple instances were started at the same time, this loop ensures each one is checked.
+Since it's possible to start multiple instances at once, the code loops through each instance ID.
 
-Fetch Tags for the Instance:
-
+Fetch Instance Tags:
 response = ec2_client.describe_instances(InstanceIds=[instance_id])
 instance_tags = response['Reservations'][0]['Instances'][0].get('Tags', [])
-We call the EC2 service to describe the instance and get its tags.
+
+
+Here, the code queries the EC2 service to get all tags associated with the specific instance.
 
 Check for Desired Tag:
-
-desired_tag_found = False
 for tag in instance_tags:
-    if tag['Key'] == 'Cost' and tag['Value'] == 'DDS':
+    if tag['Key'] == 'Cost' and tag['Value'] == 'Dummy':
         desired_tag_found = True
         break
-We go through each tag of the instance to see if the tag Cost=DDS is present.
+It then checks if the instance has a tag with the key "Cost" and a value of "Dummy".
 
-Send Alert if Tag is Found:
-
+Send Alert:
 if desired_tag_found:
     sns_client.publish(
         TopicArn=sns_topic_arn,
         Subject='EC2 Instance with Desired Tag Alert',
-        Message=f"EC2 instance with ID {instance_id} has been created with the desired tag Cost=DDS!"
+        Message=f"EC2 instance with ID {instance_id} has been created with the desired tag Cost=Dummy by user {user_arn}!"
     )
-If our desired tag is found on the instance, we send a notification to our SNS topic.
+If the desired tag is found on the instance, an alert is sent using SNS to the specified topic.
 
-Return Result:
-
-
+Lambda Response:
 return {
     'statusCode': 200,
     'body': f"Checked tags for instances: {', '.join(instance_ids)}."
 }
-After processing all instances, the function returns a message, which can be logged in CloudWatch logs, indicating which instance IDs were checked.
+The Lambda function then returns a response with a status code of 200 (indicating success) and a message indicating which instances were checked.
+
+End of Tutorial.
+
+
+This script, when paired with the correct AWS CloudWatch Event or EventBridge rule, allows for real-time monitoring and alerting of EC2 instances based on specific tag values.
+
+CloudWatch Events/EventBridge Rule Configuration Explanation
+Objective:
+The purpose of this rule is to trigger a Lambda function when a new EC2 instance is launched (not for restarts).
+
+Components of the Rule:
+
+Source:
+"source": ["aws.ec2"],
+source specifies the AWS service that is the source of the events. In this case, it's AWS EC2.
+
+Detail Type:
+"detail-type": ["AWS API Call via CloudTrail"],
+detail-type narrows down the events based on the type of detail provided. Here, it's filtering events that are related to AWS API calls captured through CloudTrail.
+
+Detail:
+"detail": {
+  "eventSource": ["ec2.amazonaws.com"],
+  "eventName": ["RunInstances"]
+}
+detail further specifies criteria for filtering events:
+eventSource: It ensures that the source of the event is ec2.amazonaws.com, which means it's an EC2-related event.
+eventName: It further filters events by selecting only those with the name RunInstances. This specific event name indicates the action of launching new EC2 instances.
+
+Explanation:
+This rule is designed to be selective and trigger only when the following conditions are met:
+
+The source of the event is AWS EC2.
+The event is an AWS API call captured through CloudTrail.
+The specific API call related to launching new EC2 instances, named RunInstances, is detected.
+As a result, the rule ensures that the Lambda function associated with it is executed only when new EC2 instances are created and not when existing instances are restarted. It's a key part of the solution to filter out the relevant events and trigger the Lambda function at the right time.
+
+
+
+IAM Role Policy Configuration Explanation
+Objective:
+This IAM policy attached to the Lambda function defines the permissions and actions that the Lambda function is allowed to perform. It ensures that the Lambda function has the necessary permissions to interact with AWS services, specifically SNS, EC2, and CloudWatch Logs.
+
+Policy Components:
+Version:
+"Version": "2012-10-17",
+This specifies the version of the IAM policy language being used.
+Statement:
+"Statement": [
+    {
+        "Sid": "VisualEditor0",
+        "Effect": "Allow",
+        "Action": [
+            "sns:Publish",
+            "ec2:DescribeInstances",
+            "logs:PutLogEvents",
+            "logs:CreateLogStream",
+            "logs:CreateLogGroup"
+        ],
+        "Resource": "*"
+    }
+]
+Statement defines a list of policy statements, and in this case, there's one statement.
+
+Statement Details:
+Sid (Statement ID):
+"Sid": "VisualEditor0",
+A unique identifier for this statement, often used for reference and readability.
+Effect:
+"Effect": "Allow",
+Specifies the effect of the statement, which is set to "Allow." This means that the actions listed in the statement are permitted.
+
+
+Action:
+"Action": [
+    "sns:Publish",
+    "ec2:DescribeInstances",
+    "logs:PutLogEvents",
+    "logs:CreateLogStream",
+    "logs:CreateLogGroup"
+],
+Lists the AWS actions that are allowed by this policy. In this case, the Lambda function is allowed to perform the following actions:
+sns:Publish: Publish messages to SNS topics.
+ec2:DescribeInstances: Describe (read information about) EC2 instances.
+logs:PutLogEvents: Add log events to CloudWatch Logs.
+logs:CreateLogStream: Create log streams in CloudWatch Logs.
+logs:CreateLogGroup: Create log groups in CloudWatch Logs.
+
+Resource:
+"Resource": "*"
+The Resource field specifies the AWS resources to which this policy applies. In this case, it's set to "*" (a wildcard), which means the policy applies to all resources. The Lambda function is allowed to perform the specified actions on any resource.
+
+Explanation:
+This IAM policy provides the Lambda function with the necessary permissions to carry out its tasks effectively:
+
+sns:Publish: Allows the Lambda function to publish messages to SNS topics, which is used to send notifications.
+ec2:DescribeInstances: Grants the Lambda function permission to retrieve information about EC2 instances. It's essential for checking tags and other instance details.
+logs:PutLogEvents: Enables the Lambda function to add log events to CloudWatch Logs. This is crucial for logging the execution of the function.
+logs:CreateLogStream and logs:CreateLogGroup: Permits the Lambda function to create log streams and log groups in CloudWatch Logs if they don't already exist. This ensures that logs can be organized properly.
+The "Resource": "*" wildcard means that these permissions apply to all AWS resources, allowing the Lambda function to operate across the entire AWS account. The Lambda function will use these permissions when interacting with the specified AWS services.
+
+This policy is tailored to the specific needs of the Lambda function, allowing it to perform actions relevant to monitoring EC2 instances and sending notifications.
+
+
+
+
