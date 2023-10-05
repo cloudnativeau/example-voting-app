@@ -1,0 +1,43 @@
+import boto3
+import time
+
+def lambda_handler(event, context):
+    # Sleep for 10 seconds to allow time for tags to be applied
+    time.sleep(10)
+
+    # Initial setup
+    sns_topic_arn = "arn:aws:sns:ap-southeast-2:329037469800:EC2TagAlerts"
+    ec2_client = boto3.client('ec2', region_name='ap-southeast-2')
+    sns_client = boto3.client('sns', region_name='ap-southeast-2')
+
+    # Extract the ARN of the user or service that started the instance
+    user_arn = event['detail']['userIdentity']['arn']
+
+    # Extract instance IDs from the event
+    instances = event['detail']['responseElements']['instancesSet']['items']
+    instance_ids = [instance['instanceId'] for instance in instances]
+
+    for instance_id in instance_ids:
+        # Fetch the tags of the EC2 instance
+        response = ec2_client.describe_instances(InstanceIds=[instance_id])
+        instance_tags = response['Reservations'][0]['Instances'][0].get('Tags', [])
+
+        # Check if the desired tag is present
+        desired_tag_found = False
+        for tag in instance_tags:
+            if tag['Key'] == 'Code' and tag['Value'] == 'ION':
+                desired_tag_found = True
+                break
+
+        # If the desired tag is found, send an alert
+        if desired_tag_found:
+            sns_client.publish(
+                TopicArn=sns_topic_arn,
+                Subject='EC2 Instance with Desired Tag Alert',
+                Message=f"EC2 instance with ID {instance_id} has been created with the desired tag Code=ION by user {user_arn}!"
+            )
+
+    return {
+        'statusCode': 200,
+        'body': f"Checked tags for instances: {', '.join(instance_ids)}."
+    }
